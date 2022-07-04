@@ -1,0 +1,10 @@
+{
+    "type": "object",
+    "properties": {
+      "rounding": {
+        "type": "number",
+        "title": "round to digits",
+        "default": 4
+      }
+    }
+  }

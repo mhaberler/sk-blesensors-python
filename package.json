@@ -1,0 +1,12 @@
+{
+    "name": "sk-blesensors-python",
+    "version": "1.0.0",
+    "description": "Signal K Node server plugin to read BLE sensors",
+    "main": "index.js",
+    "keywords": [
+      "signalk-node-server-plugin"
+    ],
+    "author": "Michael Haberler <git@mah.priv.at>, based on work by Teppo Kurki <teppo.kurki@iki.fi> (https://github.com/tkurki)",
+    "license": "Apache-2.0"
+  }
+  

@@ -3,8 +3,6 @@ from bleak.backends.device import BLEDevice
 from bleak import BleakScanner
 import asyncio
 import logging
-import sys
-import time
 import struct
 
 logger = logging.getLogger(__name__)
@@ -186,6 +184,13 @@ senso4s_svc = '00007081-0000-1000-8000-00805f9b34fb'
 # 00001881-0000-1000-8000-00805f9b34fb
 # 00001081-0000-1000-8000-00805f9b34fb
 
+whitelist = {
+    "E6:91:DF:7B:E5:4D": "env",
+    "D6:39:AE:4F:CD:0C": "mopeka1",
+    "80:EA:CA:12:24:30": "tpms_tank1",
+    "E7:3F:13:9C:2B:E1": "mopeka_tank1",
+}
+
 svcuuid_map = {
     ruuvi_svc: decode_ruuvi,
     tpms_svc: decode_tpms,
@@ -197,13 +202,14 @@ svcuuid_map = {
 def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
     for u in advertisement_data.service_uuids:
         if u in svcuuid_map.keys():
-            #print(f"details: {device.details}")
             try:
                 result = svcuuid_map.get(u)(device, advertisement_data)
-                logger.info(
+                if result:
+                    print(result)
+                logger.debug(
                     f"{device.address} '{device.name}' RSSI: {device.rssi}:  {result}")
             except CustomException as e:
-                logger.info(f"{device.details}:  {e}")
+                logger.error(f"{device.details}:  {e}")
 
             except Exception as e:
                 logger.exception(f"EXCEPTION {device.details}:  {e}")
@@ -226,17 +232,13 @@ async def blink():
 
 
 async def main():
-    await asyncio.gather(scan())  # , blink())
+    await asyncio.gather(scan()) #, blink())
 
 
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
-        # format="%(asctime)-15s %(name)-8s %(levelname)s: %(message)s",
         format=" %(message)s",
     )
     asyncio.run(main())
-    # while True:
-    #     time.sleep(1.0)
 
-    # await asyncio.gather(main())
