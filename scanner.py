@@ -268,7 +268,7 @@ async def read_input(stdin):
             break
         try:
             data = json.loads(line)
-            logger.debug(f"-- from SignalK: ----> {json.dumps(data)}")
+            logger.info(f"-- from SignalK: ----> {json.dumps(data)}")
 
         except json.JSONDecodeError as je:
             logger.error(f"JSONDecodeError parsing json: {je}: '{line}'\n")
