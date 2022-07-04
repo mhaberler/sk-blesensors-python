@@ -184,6 +184,8 @@ senso4s_svc = '00007081-0000-1000-8000-00805f9b34fb'
 # 00001881-0000-1000-8000-00805f9b34fb
 # 00001081-0000-1000-8000-00805f9b34fb
 
+use_whitelist = True
+use_whitelist = False
 whitelist = {
     "E6:91:DF:7B:E5:4D": "env",
     "D6:39:AE:4F:CD:0C": "mopeka1",
@@ -200,6 +202,9 @@ svcuuid_map = {
 
 
 def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
+    if use_whitelist and not device.address in whitelist.keys():
+        #logger.info(f"skipping {device.address} - not in whitelist")
+        return
     for u in advertisement_data.service_uuids:
         if u in svcuuid_map.keys():
             try:
