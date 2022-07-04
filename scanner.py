@@ -2,8 +2,11 @@ from bleak.backends.scanner import AdvertisementData
 from bleak.backends.device import BLEDevice
 from bleak import BleakScanner
 import asyncio
+import aioconsole
+
 import logging
 import struct
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,8 @@ class CustomException(Exception):
 dev = "hci1"
 scanmode = "passive"
 senso4s_offset = 1940
+data = {}  # config from signalK server
+
 # Mopeka:
 # converting sensor value to height - contact Mopeka for other fluids/gases
 MOPEKA_TANK_LEVEL_COEFFICIENTS_PROPANE = (0.573045, -0.002822, -0.00000535)
@@ -217,10 +222,11 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
                 logger.error(f"{device.details}:  {e}")
 
             except Exception as e:
-                logger.exception(f"EXCEPTION {device.details}:  {advertisement_data} {e}")
+                logger.exception(
+                    f"EXCEPTION {device.details}:  {advertisement_data} {e}")
 
 
-async def scan():
+async def scan(stdout):
     scanner = BleakScanner(adapter=dev, timeout=0,
                            scanning_mode=scanmode)  # , timeout=3.0)
     scanner.register_detection_callback(simple_callback)
@@ -230,14 +236,24 @@ async def scan():
         await scanner.stop()
 
 
-async def blink():
+async def read_input(stdin):
+
     while True:
-        print("------->on")
-        await asyncio.sleep(1.0)
+        line = await stdin.readline()
+        if not line:
+            break
+        try:
+            data = json.loads(line)
+            logger.info(f"-- got ----> {json.dumps(data)}")
+
+        except json.JSONDecodeError as je:
+            logger.error(f"JSONDecodeError parsing json: {je}: '{line}'\n")
 
 
 async def main():
-    await asyncio.gather(scan()) #, blink())
+    stdin, stdout = await aioconsole.get_standard_streams()
+
+    await asyncio.gather(scan(stdout), read_input(stdin))
 
 
 if __name__ == "__main__":
@@ -246,4 +262,3 @@ if __name__ == "__main__":
         format=" %(message)s",
     )
     asyncio.run(main())
-
