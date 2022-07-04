@@ -217,7 +217,7 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
                 logger.error(f"{device.details}:  {e}")
 
             except Exception as e:
-                logger.exception(f"EXCEPTION {device.details}:  {e}")
+                logger.exception(f"EXCEPTION {device.details}:  {advertisement_data} {e}")
 
 
 async def scan():
