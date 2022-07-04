@@ -7,6 +7,7 @@ import aioconsole
 import logging
 import struct
 import json
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,28 @@ svcuuid_map = {
     senso4s_svc: decode_senso4s,
 }
 
+skipkeys = ["type", "tx_power", "location"]
+
+
+def outputSk(device: BLEDevice, result: dict):
+    values = []
+    prefix = result['type'] + "." + device.address.replace(":", "").lower() + "."
+
+    for k, v in result.items():
+        if k in skipkeys:
+            continue
+        values.append({"path": prefix + k, "value": v})
+    skData = {
+        "updates": [
+            {
+                "values": values
+            }
+        ]
+    }
+    sys.stdout.write(json.dumps(skData))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
 
 def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
     if use_whitelist and not device.address in whitelist.keys():
@@ -215,9 +238,10 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
             try:
                 result = svcuuid_map.get(u)(device, advertisement_data)
                 if result:
-                    print(result)
-                logger.debug(
-                    f"{device.address} '{device.name}' RSSI: {device.rssi}:  {result}")
+                    outputSk(device, result)
+                    logger.debug(
+                        f"{device.address} '{device.name}' "
+                        f"RSSI: {device.rssi}:  {result}")
             except CustomException as e:
                 logger.error(f"{device.details}:  {e}")
 
@@ -244,7 +268,7 @@ async def read_input(stdin):
             break
         try:
             data = json.loads(line)
-            logger.info(f"-- got ----> {json.dumps(data)}")
+            logger.debug(f"-- from SignalK: ----> {json.dumps(data)}")
 
         except json.JSONDecodeError as je:
             logger.error(f"JSONDecodeError parsing json: {je}: '{line}'\n")
@@ -252,7 +276,6 @@ async def read_input(stdin):
 
 async def main():
     stdin, stdout = await aioconsole.get_standard_streams()
-
     await asyncio.gather(scan(stdout), read_input(stdin))
 
 
