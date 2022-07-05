@@ -217,6 +217,10 @@ def outputSk(device: BLEDevice, result: dict):
         if k in skipkeys:
             continue
         values.append({"path": prefix + k, "value": v})
+
+    # record signal strength
+    values.append({"path": prefix + "rssi", "value": device.rssi})
+        
     skData = {
         "updates": [
             {
@@ -265,7 +269,7 @@ async def read_input(stdin):
     while True:
         line = await stdin.readline()
         if not line:
-            break
+            continue
         try:
             data = json.loads(line)
             logger.info(f"-- from SignalK: ----> {json.dumps(data)}")
