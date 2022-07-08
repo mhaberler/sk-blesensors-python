@@ -1,10 +1,43 @@
-{
+  {
     "type": "object",
     "properties": {
-      "rounding": {
-        "type": "number",
-        "title": "round to digits",
-        "default": 4
+      "multipleParametersArray": {
+        "type": "array",
+        "title": "MAC address to path map",
+        "items": {
+          "type": "object",
+          "required": [
+            "macaddress",
+            "path"
+          ],
+          "properties": {
+            "macaddress": {
+              "type": "string",
+              "title": "MAC address",
+              "default": ""
+            },
+            "path": {
+              "type": "string",
+              "title": "path",
+              "default": ""
+            },
+            "param1": {
+              "type": "string",
+              "title": "per-instance parameter (optional)",
+              "default": ""
+            }
+          }
+        }
+      },
+      "whitelist": {
+        "type": "boolean",
+        "title": "use as whitelist",
+        "default": false
+      },
+      "hci": {
+        "type": "string",
+        "title": "BLE interface",
+        "default": "hci1"
       }
     }
   }
