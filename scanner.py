@@ -5,25 +5,46 @@ import asyncio
 import aioconsole
 
 import logging
+import logging.handlers
+
 import struct
 import json
 import sys
-
-logger = logging.getLogger(__name__)
+import binascii
 
 
 class CustomException(Exception):
     pass
 
 
+# key = '03:B3:EC:C4:2F:9F' value = 'environment.oat'
+knownmacs = {}
+global whitelist, rounding
+whitelist = True
+rounding = 4
+
 dev = "hci1"
 scanmode = "passive"
 senso4s_offset = 1940
-data = {}  # config from signalK server
 
 # Mopeka:
 # converting sensor value to height - contact Mopeka for other fluids/gases
 MOPEKA_TANK_LEVEL_COEFFICIENTS_PROPANE = (0.573045, -0.002822, -0.00000535)
+
+
+def prettify_mac(buffer, hexstring=False):
+    if hexstring:
+        b = buffer.replace(":", "")
+        if len(b) != 12:
+            raise CustomException(f"invalid length: expected 12, got"
+                                  f" {len(buffer)}:  {b}")
+        return ':'.join(format(s, '02x') for s in bytes.fromhex(b)).upper()
+    else:
+        if len(buffer) != 6:
+            raise CustomException(f"invalid length: expected 6, got"
+                                  f" {len(buffer)}:"
+                                  f" {binascii.hexlify(bytearray(buffer,encoding='utf8'))}")
+        return buffer.hex(":").upper()
 
 
 def battery_percent(voltage: float) -> int:
@@ -110,32 +131,93 @@ def decode_ruuvi(device: BLEDevice, advertisement_data: AdvertisementData):
 # //                                    00    Alarm Flag (00: OK, 01: No Pressure Alarm)
 # //
 # // How calculate Sensor Address:            (Sensor number):EA:CA:(Code binding reported in the leaflet) - i.e. 80:EA:CA:10:8A:78
+
+#
+# Manufacturer 172 (0x00ac)
+#
+#  b'af 49 4d 00 12 57 47 1f 0a 9a 33 c4 ec b3 03'
+#                               ...BLE address...
 def decode_tpms(device: BLEDevice, advertisement_data: AdvertisementData):
     data = None
+
     # several different "manufacturer codes" in the wild:
     # the hijacked TomTom 0x0100:
     if 256 in advertisement_data.manufacturer_data:
         data = advertisement_data.manufacturer_data[256]
+        if len(data) != 16:
+            hs = binascii.hexlify(bytearray(data))
+            raise CustomException(f"tpms: invalid MFD length: expect 16, got {len(data)} "
+                                  f" {advertisement_data.manufacturer_data} {hs}")
+
+        address, pressure, temperature, battery, status = struct.unpack(
+            '<6sIIBB', data)
+        return {
+            'type': 'tpms',
+            'pressure': pressure,
+            'temperature': temperature / 100.0,
+            'location': address[0] & 0x7f,
+            'battery': battery,
+            'status': status
+        }
+
+    # this one has a different format - length 15:
+#     mah@oe-sox:~$ ts|grep 'tpms MFC 172'
+# Jul  5 20:33:07 oe-sox signalk-server[26090]: blescanner: tpms MFC 172: {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_2F_9F', 'props': {'Address': '03:B3:EC:C4:2F:9F', 'AddressType': 'public', 'Name': 'TPMS_C42F9F', 'Alias': 'TPMS_C42F9F', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -86, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xaeLI\x00\x12UG\x1f\n\x9f/\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x06'}} {'type': 'tpms', 'pressure': 0.004803758, 'temperature': 0.52476853, 'battery': 10}
+
     if 172 in advertisement_data.manufacturer_data:
         data = advertisement_data.manufacturer_data[172]
-    if not data:
-        raise CustomException(f"tpms: unknown manufacturer code:"
-                              f" {advertisement_data.manufacturer_data}")
+        if len(data) != 15:
+            hs = binascii.hexlify(bytearray(data))
+            raise CustomException(f"tpms: invalid MFD length: expect 15 got {len(data)} "
+                                  f" {advertisement_data.manufacturer_data} {hs}")
 
-    if len(data) != 16:
-        raise CustomException(f"tpms: invalid MFD lengt: expect 16, got {len(data)} "
-                              f" {advertisement_data.manufacturer_data}")
+        pressure, temperature, battery, address = struct.unpack(
+            '<IIB6s', data)
+        result = {
+            'type': 'tpms',
+            'pressure': pressure / 1000000.0,
+            'temperature': temperature / 1000000.0,
+            'battery': battery
+        }
 
-    address, pressure, temperature, battery, status = struct.unpack(
-        '<6sIIBB', data)
-    return {
-        'type': 'tpms',
-        'pressure': pressure / 100000.0,
-        'temperature': temperature / 100.0,
-        'location': address[0] & 0x7f,
-        'battery': battery,
-        'status': status
-    }
+        logger.info(f"tpms MFC 172: {device.details} adv={hs} {result}")
+        return result
+
+    raise CustomException(f"tpms: unknown manufacturer code:"
+                          f" {advertisement_data.manufacturer_data}")
+
+# Jul  5 17:39:15 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_33_9A', 'props': {'Address': '03:B3:EC:C4:33:9A', 'AddressType': 'public', 'Name': 'TPMS_C4339A', 'Alias': 'TPMS_C4339A', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -85, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x06'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'} b'af494d001257471f0a9a33c4ecb303'
+#
+#
+# >>> 0xae4f4c00/1000000000
+# 2.924432384
+# >>> 0x1257471f/100
+# 3077097.27
+# >>> 0x1257471f/10000000
+# 30.7709727
+#
+#
+# Jul  5 17:39:16 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_33_9A', 'props': {'Address': '03:B3:EC:C4:33:9A', 'AddressType': 'public', 'Name': 'TPMS_C4339A', 'Alias': 'TPMS_C4339A', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -90, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x00'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'} b'af494d001257471f0a9a33c4ecb303'
+# Jul  5 17:39:16 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_33_9A', 'props': {'Address': '03:B3:EC:C4:33:9A', 'AddressType': 'public', 'Name': 'TPMS_C4339A', 'Alias': 'TPMS_C4339A', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -81, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x06'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafIM\x00\x12WG\x1f\n\x9a3\xc4\xec\xb3\x03'} b'af494d001257471f0a9a33c4ecb303'
+# Jul  5 17:39:22 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_2F_9F', 'props': {'Address': '03:B3:EC:C4:2F:9F', 'AddressType': 'public', 'Name': 'TPMS_C42F9F', 'Alias': 'TPMS_C42F9F', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -91, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x06'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'} b'af4f4d00125d471f0a9f2fc4ecb303'
+# Jul  5 17:39:23 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_2F_9F', 'props': {'Address': '03:B3:EC:C4:2F:9F', 'AddressType': 'public', 'Name': 'TPMS_C42F9F', 'Alias': 'TPMS_C42F9F', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -89, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x00'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'} b'af4f4d00125d471f0a9f2fc4ecb303'
+# Jul  5 17:39:24 oe-sox signalk-server[489]:  {'path': '/org/bluez/hci1/dev_03_B3_EC_C4_2F_9F', 'props': {'Address': '03:B3:EC:C4:2F:9F', 'AddressType': 'public', 'Name': 'TPMS_C42F9F', 'Alias': 'TPMS_C42F9F', 'Paired': False, 'Trusted': False, 'Blocked': False, 'LegacyPairing': False, 'RSSI': -90, 'Connected': False, 'UUIDs': ['0000fbb0-0000-1000-8000-00805f9b34fb'], 'Adapter': '/org/bluez/hci1', 'ManufacturerData': {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'}, 'ServicesResolved': False, 'AdvertisingFlags': b'\x06'}}:  tpms: invalid MFD lengt: expect 16, got 15  {172: b'\xafOM\x00\x12]G\x1f\n\x9f/\xc4\xec\xb3\x03'} b'af4f4d00125d471f0a9f2fc4ecb303'
+
+    # if len(data) != 16:
+    #     hs = binascii.hexlify(bytearray(data))
+    #     raise CustomException(f"tpms: invalid MFD length: expect 16, got {len(data)} "
+    #                           f" {advertisement_data.manufacturer_data} {hs}")
+
+    # address, pressure, temperature, battery, status = struct.unpack(
+    #     '<6sIIBB', data)
+    # return {
+    #     'type': 'tpms',
+    #     'pressure': pressure / 100000.0,
+    #     'temperature': temperature / 100.0,
+    #     'location': address[0] & 0x7f,
+    #     'battery': battery,
+    #     'status': status
+    # }
 
 
 def decode_mopeka(device: BLEDevice, advertisement_data: AdvertisementData):
@@ -190,14 +272,14 @@ senso4s_svc = '00007081-0000-1000-8000-00805f9b34fb'
 # 00001881-0000-1000-8000-00805f9b34fb
 # 00001081-0000-1000-8000-00805f9b34fb
 
-use_whitelist = True
-use_whitelist = False
-whitelist = {
-    "E6:91:DF:7B:E5:4D": "env",
-    "D6:39:AE:4F:CD:0C": "mopeka1",
-    "80:EA:CA:12:24:30": "tpms_tank1",
-    "E7:3F:13:9C:2B:E1": "mopeka_tank1",
-}
+# use_whitelist = True
+# use_whitelist = False
+# whitelist = {
+#     "E6:91:DF:7B:E5:4D": "env",
+#     "D6:39:AE:4F:CD:0C": "mopeka1",
+#     "80:EA:CA:12:24:30": "tpms_tank1",
+#     "E7:3F:13:9C:2B:E1": "mopeka_tank1",
+# }
 
 svcuuid_map = {
     ruuvi_svc: decode_ruuvi,
@@ -209,9 +291,13 @@ svcuuid_map = {
 skipkeys = ["type", "tx_power", "location"]
 
 
-def outputSk(device: BLEDevice, result: dict):
+def outputSk(device: BLEDevice, devcfg: dict, result: dict):
     values = []
-    prefix = result['type'] + "." + device.address.replace(":", "").lower() + "."
+    if devcfg:
+        prefix = devcfg['path'] + "."
+    else:
+        prefix = result['type'] + "." + \
+            device.address.replace(":", "").lower() + "."
 
     for k, v in result.items():
         if k in skipkeys:
@@ -220,7 +306,7 @@ def outputSk(device: BLEDevice, result: dict):
 
     # record signal strength
     values.append({"path": prefix + "rssi", "value": device.rssi})
-        
+
     skData = {
         "updates": [
             {
@@ -228,21 +314,24 @@ def outputSk(device: BLEDevice, result: dict):
             }
         ]
     }
+    logger.debug(f"--> {skData=}")
+
     sys.stdout.write(json.dumps(skData))
     sys.stdout.write("\n")
     sys.stdout.flush()
 
 
 def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
-    if use_whitelist and not device.address in whitelist.keys():
-        #logger.info(f"skipping {device.address} - not in whitelist")
+    devcfg = knownmacs.get(device.address, None)
+    if whitelist and devcfg is None:
+        #logger.debug(f"skipping {device.address} - not in whitelist")
         return
     for u in advertisement_data.service_uuids:
         if u in svcuuid_map.keys():
             try:
                 result = svcuuid_map.get(u)(device, advertisement_data)
                 if result:
-                    outputSk(device, result)
+                    outputSk(device, devcfg, result)
                     logger.debug(
                         f"{device.address} '{device.name}' "
                         f"RSSI: {device.rssi}:  {result}")
@@ -264,18 +353,34 @@ async def scan(stdout):
         await scanner.stop()
 
 
+def process(data: dict):
+    global whitelist, rounding, knownmacs
+    bledevs = data.get("multipleParametersArray", [])
+    for dev in bledevs:
+        cleaned = prettify_mac(dev['macaddress'], hexstring=True)
+        dev.pop('macaddress')
+        knownmacs[cleaned] = dev
+    whitelist = data['whitelist']
+    rounding = data['rounding']
+    logger.info(f" ----> {knownmacs=} {whitelist=}")
+
+
 async def read_input(stdin):
 
     while True:
         line = await stdin.readline()
         if not line:
             continue
+        if len(line) == 0:
+            continue
+        if line.isspace():
+            continue
         try:
             data = json.loads(line)
-            logger.info(f"-- from SignalK: ----> {json.dumps(data)}")
-
+            #logger.info(f"-- from SignalK: ----> {json.dumps(data)}")
+            process(data)
         except json.JSONDecodeError as je:
-            logger.error(f"JSONDecodeError parsing json: {je}: '{line}'\n")
+            logger.error(f"JSONDecodeError: {je}: {line}\n")
 
 
 async def main():
@@ -284,8 +389,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format=" %(message)s",
-    )
+    logger = logging.getLogger("blescanner:")
+    #logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(name)s: %(levelname)s %(message)s')
+    handler = logging.handlers.SysLogHandler(address='/dev/log')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.info('startup')
     asyncio.run(main())
