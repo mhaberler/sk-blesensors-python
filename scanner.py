@@ -16,6 +16,8 @@ import binascii
 class CustomException(Exception):
     pass
 
+k0 = 273.15
+
 
 # key = '03:B3:EC:C4:2F:9F' value = 'environment.oat'
 knownmacs = {}
@@ -64,7 +66,7 @@ def decodev5(adv):
             'type': 'ruuvi',
         }
         if data[1] != -32768:
-            result['temperature'] = round(data[1] / 200, 2)
+            result['temperature'] = round(k0 + data[1] / 200, 2)
         if data[2] != 65535:
             result['humidity'] = round(data[2] / 400, 2)
         if data[3] != 0xFFFF:
@@ -154,7 +156,7 @@ def decode_tpms(device: BLEDevice, advertisement_data: AdvertisementData):
         return {
             'type': 'tpms',
             'pressure': pressure,
-            'temperature': temperature / 100.0,
+            'temperature': k0 + (temperature) / 100.0,
             'location': address[0] & 0x7f,
             'battery': battery,
             'status': status
@@ -176,7 +178,7 @@ def decode_tpms(device: BLEDevice, advertisement_data: AdvertisementData):
         result = {
             'type': 'tpms',
             'pressure': pressure / 1000000.0,
-            'temperature': temperature / 1000000.0,
+            'temperature': k0 + (temperature) / 1000000.0,
             'battery': battery
         }
 
@@ -237,7 +239,7 @@ def decode_mopeka(device: BLEDevice, advertisement_data: AdvertisementData):
         'type': 'mopeka',
         'raw_level': raw_level,
         'propane_level': level_mm,
-        'temperature': temperature,
+        'temperature': k0 + temperature,
         'quality': (data[4] >> 6),
         'accel_x': data[8],
         'accel_y': data[9],
